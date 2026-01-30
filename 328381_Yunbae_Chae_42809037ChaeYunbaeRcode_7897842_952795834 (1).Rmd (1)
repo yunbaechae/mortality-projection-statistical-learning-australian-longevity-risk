@@ -1,0 +1,563 @@
+---
+title: "ACST3059 Assignment"
+author: "Yunbae Chae"
+date: "2023-10-24"
+output: pdf_document
+bibliography: reference.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,warning=FALSE)
+
+packages <- c("tidyverse", "ggplot2","dplyr","demography","splines","StMoMo")
+lapply(packages, library, character.only=TRUE)
+
+#Importing the mortality table and making StMoMoData
+mydat <- hmd.mx(country="AUS", username="yunbae.chae@students.mq.edu.au", password="Iam92sustod!", label = "AUS")
+MoMo <- StMoMoData(mydat,series="total",type="central")
+
+#Importing table: same mortality life table as mydat, but I can do data-wrangling for specific purposes
+dat <- read.table("all.txt")
+colnames(dat) <- dat[1,]
+dat <- dat[-1,]
+dat <- select(dat,Year,Age,qx,lx,dx)
+
+#Table has 110+ for 110+ values combined. For data usage, I need a numerical reference so I changed the entry name to 110.
+dat2018 <- filter(dat,Year==2018)
+dat2019 <- filter(dat,Year==2019)
+dat2020 <- filter(dat,Year==2020)
+dat2018$Age[111] <- "110"
+dat2019$Age[111] <- "110"
+dat2020$Age[111] <- "110"
+
+#My methodology was to make a matrix that contain all 1024 knot scenario.
+power_set <- function(input_set) {
+  list_of_sets <- list(NULL)
+  for (item in input_set) {
+    new_sets <- lapply(list_of_sets, function(existing_set) {
+      c(existing_set, item)
+    })
+    list_of_sets <- c(list_of_sets, new_sets)
+  }
+  return(list_of_sets)
+}
+
+knots <- c(5, 15, 25, 35, 45, 55, 65, 75, 85, 95)
+all_subsets <- power_set(knots)
+```
+
+\tableofcontents
+\pagebreak
+
+# Part I a
+
+## Lifetime Annuities (Deferred/ Guaranteed)
+
+As of 2023, Annuities in Australia are mostly sold by Challenger Life and Resolution Life. An annuity offers regular payments like $5,000 (just an example amount) per month until death. If the arrangement was based on a fixed number of payments, then the provider ceases to pay you as the set number of payments have completed (mostly even after death). Most representative scenario is you include an annuity arrangement as part of your retirement plan. It is mostly sold to retirees in their ages 65 to 75.
+
+## Background
+
+Australian mortality is showing a decreasing trend. It is decreasing at an exponential rate and is projected to continue over the next 100 years. The HMD database provides some statistics regarding the death rate of Australians in the last 100 years. The decreasing trend in the mortality of Australians is very evident in the data, which will be shown with different approaches in detail. Insurers must take into account the most relevant (most updated) mortality rates to avoid over-pricing or under-pricing.
+
+## Main themes
+
+There are two main ideas proposed by the modelling in this scenario. Firstly, the projections of mortality in 2033, 2053 and 2073 clearly show the overall mortality rates are decreasing. Secondly, the decrease of our mortality is accelerating.
+
+It is well known that our health trends have seen much advancement. We have much research on healthy dietary life style. We are banning smoking or transitioning to less harmful smoking habits like vaping. Our awareness of healthy life style is shared across SNS user platforms and it is very easy to collect valuable health information online. Our technological innovations and scientific findings have greatly improved infant survival rates as well as well overall health standards for all ages.
+
+## Product design
+
+People will still age and reach retirement. Annuity is not to be used as the main source of income. Rather, it should cover a percentage of your pension. Challenger revealed the most typical income flow from annuities account for 15 to 20 percent of a typical Australian's retirement portfolio.
+
+Based on the mortality modelling, the annuity provider must expect that more annuitants will survive compared to the current market situation. For example, if you sold 100 products, you will have to prepare to pay out to more accounts for longer period of time, compared to how you operate now. An annuity provider is taking such longevity risk and must know very well how to account for the risk accurately and avoid unwanted outcomes.
+
+The following modelling will process the mortality data of those born in 1921 up to 2020 and make long term predictions using different methodologies.
+
+\pagebreak
+
+# Part II a
+
+The data is downloaded from the website HMD database [@hmd_australia] or directly in R using hmd.mx function. In this part, only one or two year cohort data was required, so it was downloaded from the website. The data outlines mortality estimates of ages 0 to 110+. Only relevant variables are selected: Year, Age, qx, lx and dx.
+
+This is a general mortality plot to show the basic set up of the data. The ages span from 0 to 110+. Their death rates qx are measured and tabled for years 1921 to 2020.
+
+# Part II b
+
+The following plot represents the 2020 snapshot.
+
+```{r 2b, include=TRUE, echo=FALSE}
+#Plot only 2020 data
+dat2b <- filter(dat,Year==2020)
+plot(dat2b$Age, dat2b$qx, type = "l", xlab = "Age", ylab = "qx", main = "Mortality Plot 2020")
+```
+
+# Part II c
+
+A simple judgement can be made that the graph forms an exponential curve as age increases. It seems obvious that clients die moer exponentially as they near the termination age (120). 
+
+\pagebreak
+
+# Part III a
+
+The all_subsets variable has 1024 rows of all subsets of the 10 knots. This will turn into the residual squares, then the minimum can be found:
+  
+```{r 3a, include=TRUE, echo=TRUE}
+#Declaring a variable
+res <- rep(NA,1024)
+
+#Fit natural cubic spline for all 1024 knot scenarios
+for(i in 1:1024){
+  #Calibrate using 2018 values
+  sp <- lm(qx~ns(x=as.numeric(dat2018$Age),knots=all_subsets[[i]]),data=as.data.frame(dat2018))
+  
+  #Predict qx values for 2019
+  pre <- predict(sp,newdata=list(x=as.numeric(dat2019$Age)))
+  
+  #Get errors against the 2019. Validation using 2019.
+  res[i] <- sum((as.numeric(dat2019$qx)-pre)^2)
+}
+
+#Which entry is minimum
+which.min(res)
+all_subsets[which.min(res)]
+```
+
+The above code tests all 1024 subsets of the 10 knots (calibrated in 2018 data) on the 2019 data (validation). The minimum squared error is found when all 10 knots were included.\
+
+# Part III b
+
+Methodology: get $\lambda\in\{-1.5,1.5\}$ fitted into the smooth.spline for 2018 data and then get MSE of the predictions v 2019 data. Then find the least squared error.\
+\
+```{r 3b, echo=TRUE, include=TRUE}
+#Declare lambda values
+lam <- seq(-1.5,1.5,by=0.001)
+
+#Declare MSE variable
+MSE <- rep(NA,3000)
+for(i in 1:3000){
+  #Calibration smooth spline using 2018 data
+  best <- smooth.spline(dat2018$Age,dat2018$qx,spar=lam[i])
+  
+  #Predictions using 2018 data
+  predic <- predict(best,x=as.numeric(dat2018$Age))
+  
+  #Validation using 2019 data
+  MSE[i] <- sum((as.numeric(dat2019$qx)-predic$y)^2)
+}
+
+#Finding minimum error squared
+which.min(MSE)
+MSE[which.min(MSE)]
+lam[which.min(MSE)]
+```
+
+Each calibrated smooth.spline models with different spar values betwween -1.5 and 1.5 were validated using 2019 data. The minimum MSE was found when spar=`r lam[which.min(MSE)]`.
+
+# Part III c
+
+```{r 3c, include=TRUE, echo=TRUE}
+#Same process as before: calibrate using 2018 data for natural cubic spline
+natural <- lm(qx~ns(x=as.numeric(dat2018$Age),knots=all_subsets[[1024]]),data=as.data.frame(dat2018))
+naturalp <- predict(natural,new.data=dat2020$Age)
+
+#Find sum of error squared against 2020 data
+naturals <- sum((as.numeric(dat2020$qx)-naturalp)^2)
+
+#Same process for smooth spline using 2018 data
+smooth <- smooth.spline(dat2018$Age,dat2018$qx,spar=-0.15)
+smoothp <- predict(smooth,x=as.numeric(dat2020$Age))
+
+#Find sum of error squared against 2020 data
+smooths <- sum((as.numeric(dat2020$qx)-smoothp$y)^2)
+
+plot(dat2020$Age,dat2020$qx,xlab="Age",ylab="Mortality")
+lines(naturalp,col="red")
+lines(smoothp,col="blue")
+legend("top", legend=c("Natural Spline", "Smooth Spline"), 
+       col=c("red", "blue"), lty=1, cex=0.8)
+
+#Did not get the MSE as I believed this is just comparing errors
+naturals
+smooths
+```
+
+Both methods produce smooth curves to fit the data. They are both piecewise polynomial which provides continuity and smoothness.
+
+The main difference between natural cubic and smooth splines is in the knot selection. Natural splines' knots are selected manually, while smooth splines' knots are wherever x values are, and their smoothing is adjusted by a parameter.
+
+This creates more flexibility for the smooth splines. The smooth splines' automatic knot placement and the smoothing parameter allows adaptation to various data patterns. Natural cubic splines require manual selection of knots.
+
+Nevertheless, it is not possible to decide which method is absolutely superior to the other. Manually selecting knots in a very unique data pattern can produce a more sensible natural cubic spline. However, in this specific set up, the smooth spline shows a superior fit, both by numerical and graphical evaluation.
+
+# Part III d
+
+## i Chi-squared test of fit
+
+(Using codes published in tutorial solution, regarding the Chi squared test*)\
+\
+$H_0:$ The observed $d_x$'s fit the predicted $d_x$'s.\
+$H_1:$ Not $H_0$\
+\
+```{r 3di, include=TRUE, echo=TRUE}
+#The choice of model being smooth spline: predict using 2019 data
+smooth <- smooth.spline(dat2019$Age,dat2019$qx,spar=-0.15)
+smoothp <- predict(smooth,x=as.numeric(dat2019$Age))
+
+#2019 dx observed
+observed <- as.numeric(dat2019$dx)
+
+#2019 dx expected
+expected <- smoothp$y * as.numeric(dat2019$lx)
+
+#As per chi-squared test formula
+chisq.teststat <- sum((observed-expected)^2/expected)
+chisq.df <- length(dat2019$dx) - 2
+chisq.pval <- 1 - pchisq(chisq.teststat, chisq.df)
+chisq.pval
+```
+
+the p-value is close to 1, and the test statistic `r chisq.teststat` is well below `r qchisq(0.95,chisq.df)`. There is strong evidence to retain the null hypothesis: The observed 2019 dx's data fits well overall with the predicted 2019 dx's.
+\
+
+## ii Standardised deviations test
+
+$H_0$: $z_x\sim N(0,1)$.
+$H_1$: Not $H_0$.
+
+```{r 3dii, include=TRUE, echo=TRUE}
+#Standardising graudated qx's
+z <- (smoothp$y-mean(smoothp$y))/sd(smoothp$y)
+
+#Expected number of zx's in an interval
+EE <- function(LB,UB){
+  return((pnorm(UB)-pnorm(LB))*111)
+}
+
+#Counting number of zx's in an interval
+OO <- function(LB,UB){
+  return(sum(z>LB & z<UB))
+}
+
+#Although not included in these codes, those intervals are my own findings from tests in an effort to divide intervals so each intervals have 5 or possibly closest to 5 expected number of zx's.
+E <- rep(NA,18)
+E[1] <- EE(-6,-1.7)
+E[2] <- EE(-1.7,-1.3)
+E[3] <- EE(-1.3,-1.1)
+E[4] <- EE(-1.1,-0.9)
+E[5] <- EE(-0.9,-0.7)
+E[6] <- EE(-0.7,-0.5)
+E[7] <- EE(-0.5,-0.3)
+E[8] <- EE(-0.3,-0.15)
+E[9] <- EE(-0.15,0)
+E[10] <- E[9]
+E[11] <- E[8]
+E[12] <- E[7]
+E[13] <- E[6]
+E[14] <- E[5]
+E[15] <- E[4]
+E[16] <- E[3]
+E[17] <- E[2]
+E[18] <- E[1]
+
+# Assign number of observations to each intervals
+O <- rep(NA,16)
+O[1] <- OO(-6,-1.7)
+O[2] <- OO(-1.7,-1.3)
+O[3] <- OO(-1.3,-1.1)
+O[4] <- OO(-1.1,-0.9)
+O[5] <- OO(-0.9,-0.7)
+O[6] <- OO(-0.7,-0.5)
+O[7] <- OO(-0.5,-0.3)
+O[8] <- OO(-0.3,-0.15)
+O[9] <- OO(-0.15,0)
+O[10] <- OO(0,0.15)
+O[11] <- OO(0.15,0.3)
+O[12] <- OO(0.3,0.5)
+O[13] <- OO(0.5,0.7)
+O[14] <- OO(0.7,0.9)
+O[15] <- OO(0.9,1.1)
+O[16] <- OO(1.1,1.3)
+O[17] <- OO(1.3,1.7)
+O[18] <- OO(1.7,6)
+
+#As per lecture materials
+X <- sum((O-E)^2/E)
+qchisq(0.95,17)
+pval <- 1-pchisq(X,17)
+```
+
+The p-value of the test statistic is `r pval`. This is a very strong evidence that the deviations do not follow a standard normal distribution and there is potential over-graduation.
+
+## iii Signs test
+
+$H_0$: The probability of a randomly selected difference being positive is 0.5.\
+$H_1$: The probability of a randomly selected difference being positive is not 0.5.\
+\
+
+```{r 3diii, include=TRUE, echo=TRUE}
+#a represents the cumulative sum of probabilities (CDF) and when it exceeds 0.025 significance level, the loop will stop.
+a <- 0
+i <- 1
+
+#How many graduated qx's are greater than observed qx's.
+P <- sum(smoothp$y>as.numeric(dat2019$qx))
+
+while(a<0.025){
+  a <- a+pbinom(i,111,0.5)
+  i <- i+1
+}
+
+#If the below holds, retail null hypothesis
+i<=P & P<=111-i
+```
+Since $i\leq P\leq111-i$, there is insufficient evidence to reject the null hypothesis at a 5% significance level. It can be claimed that the prediction has no tendency to be above or below the observed values, in other words, it is not biased above or below the observed values.
+
+## iv Cumulative deviations test
+
+$H_0$: The graduated rates are adequate.\
+$H_1$: The graudated rates are too high or too low.\
+
+```{r 3div, include=TRUE, echo=TRUE}
+#Sum of deaths
+Dx <- as.numeric(dat2019$dx)
+Ex <- as.numeric(dat2019$lx)*as.numeric(smoothp$y)
+
+sum(Dx-Ex)/sum(Ex)^0.5
+```
+Since `r (Dx-Ex)/Ex`$\geq$1.96, there is not enough evidence to reject the null hypothesis. The graduated rates are adequate.\
+\
+
+## v Grouping of signs test
+
+$H_0$: There is no over-graduation.
+$H_1$: Not $H_0$.
+
+```{r 3dv, include=TRUE, echo=TRUE}
+#Set up test statistic
+PP <- function(g){
+  choose(53-1,g-1)*choose(58+1,g)/choose(111,53)
+}
+#Declare variables
+t <- 1
+summ <- 0
+
+#summ is the growing sum of probabilities. The loop stops when it exceeds 0.05 and the t will be compared with 111.
+while(summ<0.05){
+  summ <- summ+PP(t)
+  t <- t+1
+}
+t
+```
+Since 111>`r t`, there is not enough evidence to reject the null hypothesis at the 5% significance level. There is not enough evidence of over-graduation.
+
+## vi Serial correlations test
+
+$H_0$: $r_j\sqrt{m}\sim N(0,1)$\
+$H_1$: Not $H_0$
+  
+```{r 3dvi, include=TRUE, echo=TRUE}
+#As per lecture material, variable names are self-explanatory!
+zbar <- mean(z)
+zi <- z[1:110]
+zij <- z[2:111]
+top <- 1/(111-1)*sum((zi-zbar)*(zij-zbar))
+zi <- z[1:111]
+bot <- 1/111*sum((zi-zbar)^2)
+rr <- top/bot
+teststat <- rr*sqrt(111)
+```
+
+The test statistic is `r teststat`>1.64. There is a strong evidence against the null hypothesis. There is a clustering of deviations due to correlation that leads to over-graduation. This is a major characteristic of this model because there is a very strong horizontal trend in the early ages. The very low death rate maintains almost a horizontal line for a prolonged time, from age 0 to around 60.
+
+## vii
+
+The standardised deviations test and serial correlations test have rejected the null hypotheses. Firstly, the standardised deviations test could not hold for such data like ours because it is exponentially distributed. Such distribution may not always follow the properties of a standard normal distribution after standardisation. Secondly, it might not be a reasonable practice to try a serial correlations test, because the data below age 60 is very flat and horizontal. Any graduated line would likely cross over the data very few times and result in clustering of same signs of deviations, which would mostly appear to be correlated.
+
+# Part III e
+
+End Behavior: One of the most evident issues in the plot is the end behavior, particularly around the age of 100. The model prediction sharply rises, which is unlikely to be a realistic representation of the data. Such behavior may not be desirable, especially in mortality modeling where a gradual leveling or a more subtle curve might be expected as age approaches the upper limit.
+
+Assumption Violation: Splines, by their nature, assume that the relationship between the predictor and response is smooth and continuous. In the context of mortality data, this might not always be the case, especially if there are sudden changes or disruptions in the data due to external factors.
+
+Extrapolation Risks: Given the smooth nature of splines, extrapolating beyond the data range can be risky and may yield unrealistic results. This is particularly evident in the high age range of the graph.
+
+Underlying Causes: Mortality rates can be influenced by numerous factors, like diseases, socioeconomic conditions, medical advancements, etc. A spline model might not capture the nuances or sudden changes caused by such factors.
+
+\pagebreak
+
+# Part IV a
+
+Both LC and APC models are stochastic models that take into account age and time trend, therefore it is possible to model predictions that incorporate additional factors such as time trend and cohort effect. APC takes into account cohort effects while LC doesn't. It is therefore often more precise than LC, as it has been proven from different countries that cohort effects do exist and significantly influences the outcome of the insurance products.\
+\
+Lee-Carter Model: $ln(m_{x,t})=\alpha_x+\beta_x\kappa_t+\epsilon_{x,t}$\
+Age-Period-Cohort extension to the LC: $ln(m_{x,t})=\alpha_x+\beta_x^{(1)}\kappa_t+\beta_x^{(2)}\gamma_{t-x}+\epsilon_{x,t}$\
+$\alpha_x$: General mortality at age x.\
+$\beta_x$: The proportion of each time trend t (by $\kappa_t$) on age x.\
+$\kappa_t$: Magnitude of each time trends t.\
+$\gamma_{t-x}$: Magnitude of a cohort's impact on mortality of each age x.\
+
+```{r 4b, include=FALSE, echo=FALSE, warning=FALSE, message=FALSE}
+#Momo is the direct import using hmd.mx. It was in the very first R bracket.
+
+#Fit LC using MoMo data, up to 2019
+LC <- fit(lc(),data=MoMo,ages=0:110,years=1921:2019)
+
+#Forecasting for 2020
+forecastLC <- forecast(LC,h=1)
+
+#Get MSE
+MSELC <- mean((as.numeric(dat2020$qx)-forecastLC$rates)^2)
+
+#Fit APC using MoMo data, up to 2019
+APC <- fit(apc(),data=MoMo,ages=0:110,years=1921:2019)
+
+#Forecasting for 2020
+forecastAPC <- forecast(APC,h=1)
+
+#Get MSE
+MSEAPC <- mean((as.numeric(dat2020$qx)-forecastAPC$rates)^2)
+
+#Self explanatory! :)
+plot(dat2020$Age,dat2020$qx,xlab="Age",ylab="qx",main="LC v APC")
+lines(forecastLC$rates,col="red")
+lines(forecastAPC$rates,col="blue")
+legend("top", legend=c("LC", "APC"), 
+       col=c("red", "blue"), lty=1, cex=0.8)
+```
+
+# Part IV c (part b answer shown in R codes file)
+
+```{r 4c, include=FALSE, echo=FALSE}
+MSELC
+MSEAPC
+```
+The average of the squares of the errors are `r MSELC` (LC) and `r MSEAPC` (APC). APC predictions for 2020 shows much less errors against the observed values. Please refer to R Code file to review the codes.
+
+# Part IV d
+
+```{r 4d, include=TRUE, echo=FALSE}
+plot(LC)
+```
+$\alpha_x$: General mortality trend.\
+$\beta_x$: There is a significant spike in the infant up to age 18, which means infant mortality has had the biggest improvement. A lot of mortality improvement has been focused on that particular age. At the oldest ages, $\beta_x$ shows very weak change so old age related mortality issues like general aging sickness, cancer, etc. We have not had particular medical improvements in this part compared to the infant up to age 18. Ages 20 to 70 must be applicable for general work safety, general safety and living standards etc improved the mortality across the working ages much more compared to the oldest ages.\
+$\kappa_t$ (Overall mortality change): There is a decreasing slope for $\kappa_t$ curve with respect to the period t. The overall mortality change has been decreasing over time. The overall mortality has been improving over time. From around 1970, the curve has been kind of flat, but it decreases more. From this time on, the mortality has been decreasing faster (due to awareness about smoking, general safety, medical development and understanding of healthy life styles, etc).\
+
+```{r 4dii, include=TRUE, echo=FALSE}
+par(mfrow=c(1:2))
+
+#Only display cohort effect plot: All possible years
+plot(y=APC$gc,type="l",x=1811:2020,xlab="Year",ylab="gamma t-x",main="Cohort effect")
+
+#Cut the data to display only years 1921 to 1970. The reason why I did this is I believe these are only relevant values. Please refer to my explanations!
+rel <- APC$gc[seq(-1,-110)]
+rel <- rel[seq(-51,-100)]
+plot(y=rel,type="l",x=1921:1970,xlab="Year",ylab="gamma t-x",main="Cohort effect")
+```
+$\gamma_{t-x}$: Since the data only starts from 1921, the cohorts born in 1811 up to 1920 would not have as much data and accuracy. Those born after 2000 are around 20 years old and we have not seen their old age mortality trends. Even those born in 1970s are around 50 years old. They should still have very low rate of mortality as per the general mortality plot, so it would be very difficult to correctly measure their cohort effect. It looks as though the cohort mortality is a decreasing trend over time, but this could be misleading because it might rather be illustrating the lack of data instead. For example, the little tick of sudden surge at the 2018~2020 death rate should most likely be due to the new-born mortality spike: One should not just conclude that 2020 cohort has a worse mortality trend than the 2018 cohort. Therefore, it could be reasonable to refer to 1921~1970 data.
+
+With period trend taken care of, we should consider the major social situation. The 1945~ is the recovery from the world war and those born around 1930 would spend their early ages in post-war recovery. Their mortality is subject to an improving trend whereas for 1960 baby-booming age, their mortality deteriorates for a while. According to the suggestion in lectures, the war time survivors went through harsh living conditions and it was later found to be rather healthier dietary lifestyle than that of the baby-boomers.
+
+\pagebreak
+
+# Part V a
+
+```{r 5a, include=FALSE, echo=FALSE, warning=FALSE, message=FALSE}
+#Forecast using LC for all years up to 2073
+LCf <- forecast(LC,h=2073-2019)
+
+#MoMo data needed to convert to data frame for some data wrangling
+LCf <- data.frame(LCf$rates)
+LCf <- select(LCf,X2033,X2053,X2073)
+colnames(LCf) <- c(2033,2053,2073)
+
+#Forecast using APC for all years up to 2073
+APCf <- forecast(APC,h=2073-2019)
+
+#MoMo data needed to convert to data frame for some data wrangling
+APCf <- data.frame(APCf$rates)
+APCf <- select(APCf,X2033,X2053,X2073)
+colnames(APCf) <- c(2033,2053,2073)
+
+#Plot components declaration
+rows <- 1:nrow(LCf)
+cols <- colnames(LCf)
+y_range <- range(c(log(LCf), log(APCf)))
+
+# Create a plot with appropriate limits
+plot(rows, LCf[,1], type="n", ylim=y_range,
+     xlab="Age Group (or Row Number)", ylab="Forecasted Mortality Rate", main="LC & APC Forecasted Mortality")
+
+lines(rows, log(LCf[, "2033"]), col="darkred", lwd=2)
+lines(rows, log(LCf[, "2053"]), col="red", lwd=2)
+lines(rows, log(LCf[, "2073"]), col="pink", lwd=2)
+
+# Add APCf data to the plot
+lines(rows, log(APCf[, "2033"]), col="darkblue", lwd=2, lty=2)  # lty=2 makes it dashed
+lines(rows, log(APCf[, "2053"]), col="blue", lwd=2, lty=2)
+lines(rows, log(APCf[, "2073"]), col="lightblue", lwd=2, lty=2)
+
+par(mar=c(5, 4, 4, 2) + 0.1)
+
+# Add a legend to distinguish between LC and APC and the years
+legend("bottomright", legend = c("LC 2033", "LC 2053", "LC 2073", "APC 2033", "APC 2053", "APC 2073"),
+       col = c("darkgreen", "green", "lightgreen", "darkblue", "blue", "lightblue"),
+       lty = c(1, 1, 1, 2, 2, 2), lwd = 2, bg = "white")
+```
+
+It is evident that there is a decreasing trend of overall mortality both visible from LC and APC. However, there is a diagonal incompleteness in APC. We might have the complete data of 1921 cohort's births and deaths, but most of those born in 1960 for example, would still be alive now, therefore the 1960 cohort effect predictions would already be quite incomplete and not applicable for long term predictions. 
+
+Nevertheless, using APC, evaluating their current mortality trends can be instrumental to understanding current trends and making short-term predictions. However, as we increase the prediction span to 2053 and 2073, it might be misleading to rely on a crude APC prediction like above, if it has not been adjusted further for a specific purpose. For instance, we have checked 2020 cohorts have worse mortality than 2018. This must be due to the age 0 infant fail rates. In short term, we can use this to predict the infant death rates of the 2020 cohorts (and conclude that for some reason, 2020 cohort infant mortality has improved or deteriorated in comparison to that of 2019), but we can't keep using this to predict their mortality at age 10, because their mortality would definitely have already hit near zero.
+
+I have researched and found that the typical practice should not just end with adding the cohort effect plot. You should incorporate external information, constraint application and smoothing etc and come up with an adjusted APC version. The application of APC can be more effective than LC for certain uses, but the 1921~2019 data calibration without any further data maintenance in this specific assignment set up renders the LC prediction a superior choice to predict the mortality rates in 2033, 2053 and 2073.
+
+The LC predictions above go down by equal spaces. However, the plot is the logged version and if we revert them back to pure numbers, it is expected that the mortality in 2053-2073 will decrease faster than that of 2033-2053. The mortality is exponentially decreasing.
+
+# Part V b
+
+The design of the annuity product must incorporate the two main themes: Decreasing mortality and increasing rate of the decrease. Regarding products that terminate on death, an annuity provider must expect that more of their annuity recipients will still be alive in their old ages in 2053 and even more so in 2073. On top of a larger number of surviving recipients, you must expect to pay them longer.
+
+One more thing to note is that all 2033, 2053 and 2073 LC predictions converge at around the age 90. As it was discussed in earlier questions, the mortality improvements have never been applicable for very old ages, which means the annuity provider could take note of this and expect the age 90+ would continue to show similar performance. 
+
+After all, the annuity provider should review the longevity risk and make adjustments to their pricing for ages up to 90. They must allow for an exponentially growing number of surviving annuity recipients at old ages. They should also allow for longer payouts limited to age 90. This should be reflected in a price increase, otherwise the annuity provider would most likely suffer losses.
+
+# Part V c
+
+The APC prediction based on the cohort effect above can be improved first:
+
+Partial cohorts: It could be made so that only 1921~1940 cohort effects can be included and all 1940+ rates can be weighted zero. This can address the impact of incomplete information.
+
+Smoothing: Cohort effects can be smoothed and their noises can be reduced.
+
+Constraint application: The linearity problem can be addressed by imposing constraints.
+
+Incorporating external information: If there is a well-understood reason that a particular cohort would show different mortality trends, this information should be integrated into the model.
+
+The diagonal incomplete would always be present. Therefore, the discussed process must be made carefully or the APC model would almost definitely fail.
+
+\pagebreak
+
+# Part VI a
+
+Constant cash flow is in the central operation of the annuity. Therefore, the operation of the annuity contracts is prone to changing economic situations. For example, the reserve is exposed to capital loss if interest rates rise and your bonds decrease in value. Another example is that clients would find it more favourable to buy an annuity that takes into account inflation, by increasing the pay out over time. You have to compete the other companies to provide best possible value to retain your customers, but at the same time, you would not want to underestimate the inflation risk. Essentially, you would not want to over-price your products so you don't lose clients, but you would also not want to under-price your products as you will be paying your clients more than you charged them. 
+
+To continue operating in line with the volatile economic situations, the annuity provider has to foresee the coming economic trends and work out a way to best prepare for it, so they don't incur capital loss or make net loss from their products. The most relevant data source would be the World Bank, IMF or other private financial databases and analysts.
+
+From there, an annuity provider would keep track of the most up to date information regarding:
+
+Interest rates\
+Inflation rates\
+GDP growth rates\
+Stock market indices\
+Unemployment rates\
+Healthcare expenditure\
+Life insurance penetration and density\
+
+Using these values, one approach can be modelling forecasts of the economy by processing the data. Techniques relevant to using data such as ARIMA, Holt-Winters or even deep learning LSTM can be implemented. Simulated forecasts of inflation rates, for example, would help trace the future cash flow expectations.
+
+This is a very general preview of what would take place alongside the mortality modelling in designing an annuity product. A few more important steps would include a qualitative review to evaluate if the projections make sense, and what external information has not yet been included in the calculations. Another important step would be to detect and add to the calculation how much correlation there is between the imported economic parameters against the mortality data. For example, if the country keeps increasing investments in healthcare expenditures debts will accumulate and you can make suitable estimations of how this would influence the economy. You should not end here, but also check the mortality modelling and see if you have to make adjustments to the overall mortality in that country.
+
+No model can exactly depict the real world, and this model is subject to constant evaluation and reinforcements. It should be constantly reviewed and identified of what needs to be fixed. Just like how existing products are being re-valued on a weekly basis, this new product would also continue the cycle of evaluation and re-valuation (Actuarial Control Cycle).
+
+\pagebreak
+
+# Bibliography
